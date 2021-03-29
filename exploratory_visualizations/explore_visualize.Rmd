@@ -1,0 +1,298 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(arrow)
+library(tidyverse)
+library(tidytext)
+library(ggwordcloud)
+```
+
+```{r}
+df <- arrow::read_parquet("submissions/reddit_submissions_2021-03-02_23:27:18_UTC.parquet") %>% as_tibble() %>% mutate(subreddit = as_factor(subreddit))
+```
+
+```{r}
+df %>% summary()
+```
+
+
+```{r}
+tidytext_df <- df %>% 
+  pivot_longer(cols = c('title','text'), 
+               names_to = "text_type", 
+               values_to = "text") %>% 
+  mutate(text_type=as_factor(text_type)) %>% 
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words)
+
+tidytext_df %>% summary()
+```
+
+
+```{r}
+tidytext_df %>% filter(subreddit=="wallstreetbets") %>% group_by(subreddit, word) %>% count(sort=TRUE) 
+```
+
+```{r}
+tidytext_df %>% 
+  count(word, sort=TRUE) %>% head(100) %>% 
+  ggplot(aes(label=word, size=n)) + geom_text_wordcloud()
+```
+
+```{r}
+tidytext_df %>% 
+  count(subreddit, word, sort=TRUE) %>% head(300) %>% 
+  ggplot(aes(label=word, size=n, color=subreddit)) + 
+  geom_text_wordcloud() + 
+  facet_wrap(vars(subreddit))
+```
+```{r}
+tidytext_df %>% 
+  count(subreddit, word) %>% 
+  group_by(subreddit) %>% 
+  mutate(proportion = n / sum(n))
+```
+
+
+```{r fig.width=6, fig.height=2}
+library(scales)
+
+tidytext_df %>% 
+  count(subreddit, word) %>% 
+  group_by(subreddit) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(subreddit, proportion) %>% 
+  gather(subreddit, proportion, investing:algotrading) %>% 
+  ggplot(aes(x = proportion, y = wallstreetbets, color = abs(wallstreetbets - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "navy", high = "gray50") +
+  facet_wrap(~subreddit, ncol = 3) +
+  theme(legend.position="none") +
+  labs(y = "wallstreetbets", x = NULL)
+```
+
+many numbers - lets remove all alphabetical characters
+
+```{r fig.width=6, fig.height=2}
+tidytext_df %>%
+  mutate(word = str_extract(word, "[a-z']+")) %>% 
+  count(subreddit, word) %>% 
+  group_by(subreddit) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(subreddit, proportion) %>% 
+  gather(subreddit, proportion, investing:algotrading) %>% 
+  ggplot(aes(x = proportion, y = wallstreetbets, color = abs(wallstreetbets - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "navy", high = "gray50") +
+  facet_wrap(~subreddit, ncol = 3) +
+  theme(legend.position="none") +
+  labs(y = "wallstreetbets", x = NULL)
+```
+
+
+
+
+```{r fig.width=6, fig.height=2}
+library(SnowballC)
+tidytext_df  %>%
+  mutate(word = SnowballC::wordStem(word, language = "porter")) %>%
+  mutate(word = str_extract(word, "[a-z']+")) %>% 
+  count(subreddit, word) %>% 
+  group_by(subreddit) %>% 
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(subreddit, proportion) %>% 
+  gather(subreddit, proportion, investing:algotrading) %>% 
+  ggplot(aes(x = proportion, y = wallstreetbets, color = abs(wallstreetbets - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "navy", high = "gray75") +
+  facet_wrap(~subreddit, ncol = 3) +
+  theme(legend.position="none") +
+  labs(y = "wallstreetbets", x = NULL)
+```
+
+
+```{r}
+afinn <- get_sentiments("afinn") %>% rename("afinn"="value")
+bing <- get_sentiments("bing") %>% mutate("bing"=as.integer(sentiment=="positive")*2-1) %>% select(-sentiment)
+nrc <- get_sentiments("nrc") %>% 
+  mutate(negative = sentiment=="negative", 
+               fear = sentiment=="fear",
+               sadness = sentiment=="sadness",
+               anger = sentiment=="anger",
+               disgust = sentiment=="disgust",
+               positive = sentiment=="positive",
+               trust = sentiment=="trust",
+               joy = sentiment=="joy",
+               anticipation = sentiment=="anticipation") %>% 
+  group_by(word) %>% summarise_if(is_logical, sum)
+
+
+tidytext_df <- tidytext_df %>% 
+  left_join(afinn, by="word") %>%
+  left_join(bing, by="word") %>% 
+  left_join(nrc, by="word")
+
+tidytext_df %>% summary()
+```
+
+
+
+
+```{r}
+tidytext_df %>% group_by(subreddit) %>% summarise(mean(afinn, na.rm = TRUE))
+
+tidytext_df %>% ggplot(aes(x=afinn, fill=subreddit)) + geom_density(alpha=.4) + facet_wrap(vars(subreddit))
+tidytext_df %>% ggplot(aes(x=afinn, fill=subreddit)) + geom_boxplot()
+tidytext_df %>% 
+  group_by(subreddit) %>% 
+  summarise(mean=mean(afinn, na.rm = TRUE), 
+            stderr=sd(afinn, na.rm = TRUE)/sqrt(n()), 
+            ymin=mean-stderr, 
+            ymax=mean+stderr) %>% 
+  ggplot(aes(x=subreddit, y=mean)) + 
+  geom_bar(stat="identity", fill="navy", alpha=.7) + geom_errorbar(aes(ymin=ymin, ymax=ymax)) + ylim(-1, 1)
+```
+
+
+
+
+
+
+```{r}
+tidytext_df %>% group_by(subreddit) %>% summarise(mean(bing, na.rm = TRUE))
+
+tidytext_df %>% ggplot(aes(x=bing, fill=subreddit)) + geom_density(alpha=.4) + facet_wrap(vars(subreddit))
+tidytext_df %>% 
+  group_by(subreddit) %>% 
+  summarise(mean=mean(bing, na.rm = TRUE), 
+            stderr=sd(bing, na.rm = TRUE)/sqrt(n()), 
+            ymin=mean-stderr, 
+            ymax=mean+stderr) %>% 
+  ggplot(aes(x=subreddit, y=mean)) + 
+  geom_bar(stat="identity", fill="navy", alpha=.7) + geom_errorbar(aes(ymin=ymin, ymax=ymax)) + ylim(-1, 1)
+
+tidytext_df %>% 
+  group_by(subreddit) %>% 
+  summarise(mean=mean(bing, na.rm = TRUE), 
+            stderr=sd(bing, na.rm = TRUE)/sqrt(n()), 
+            ymin=mean-stderr, 
+            ymax=mean+stderr,
+            count_positive=sum(if_else(bing==1, 1, 0), na.rm = TRUE),
+            count_negative=sum(if_else(bing==-1, 1, 0), na.rm = TRUE),
+            count_all = n(),
+            portion_positive = count_positive / count_all,
+            portion_negative = count_negative / count_all) %>% 
+  select(subreddit, portion_positive, portion_negative) %>% 
+  pivot_longer(portion_positive:portion_negative, names_to="sentiment", values_to="portion") %>% 
+  ggplot(aes(x=subreddit, y=portion, fill=sentiment)) + geom_bar(stat="identity") + scale_fill_manual(values=c("navy","deeppink2")) +
+  ylim(0,.2)
+
+
+```
+
+
+
+```{r fig.height=5, fig.width=4}
+tidytext_df %>% 
+  select(subreddit, negative:anticipation) %>% 
+  group_by(subreddit) %>% 
+  summarize_all(~ sum(.x, na.rm = TRUE)/n()) %>% 
+  pivot_longer(cols=negative:anticipation, names_to="sentiment", values_to="proportion") %>% 
+  ggplot(aes(x=fct_reorder(subreddit,proportion), fill=subreddit, y=proportion*100)) + 
+  geom_bar(stat="identity") + 
+  facet_grid(fct_reorder(sentiment, proportion)~.) + 
+  coord_flip() + labs(x= "subreddit", y = "percent of tokens")
+```
+
+```{r fig.height=5, fig.width=4}
+tidytext_df %>% 
+  select(subreddit, negative:anticipation) %>% 
+  group_by(subreddit) %>% 
+  summarize_all(~ sum(.x, na.rm = TRUE)/sum(if_else(!is.na(.x), 1, 0))) %>% 
+  pivot_longer(cols=negative:anticipation, names_to="sentiment", values_to="proportion") %>% 
+  ggplot(aes(x=fct_reorder(subreddit,proportion), fill=subreddit, y=proportion*100)) + 
+  geom_bar(stat="identity") + 
+  facet_grid(fct_reorder(sentiment, proportion)~.) + 
+  coord_flip() + labs(x= "subreddit", y = "percent of tokens", subtitle="normalize by number of words with any sentiment")
+```
+
+
+
+
+```{r}
+tfidf_df <- tidytext_df %>% group_by(subreddit, word) %>% count() %>% bind_tf_idf(word, subreddit, n)
+tfidf_df %>% arrange(desc(tf_idf))
+```
+
+
+
+```{r fig.height=4, fig.width=6}
+tfidf_df %>%
+  group_by(subreddit) %>%
+  slice_max(tf_idf, n = 40) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = subreddit)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~subreddit, ncol = 4, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+
+```{r fig.height=4, fig.width=6}
+nrc
+
+tidytext_df %>% 
+  filter %>% 
+  select(subreddit, negative:anticipation) %>% 
+  group_by(subreddit) %>% 
+  summarize_all(~ sum(.x, na.rm = TRUE)/sum(if_else(!is.na(.x), 1, 0))) %>% 
+  pivot_longer(cols=negative:anticipation, names_to="sentiment", values_to="proportion")
+
+
+tfidf_df %>% 
+  inner_join(filter(nrc, positive==1)) %>% 
+  group_by(subreddit) %>%
+  slice_max(tf_idf, n = 40, with_ties=FALSE) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = subreddit)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~subreddit, ncol = 4, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+
+
+```{r}
+
+tfidf_df %>% 
+  inner_join(filter(nrc, negative==1)) %>% 
+  group_by(subreddit) %>%
+  slice_max(tf_idf, n = 40, with_ties=FALSE) %>%
+  ungroup() %>%
+  ggplot(aes(tf_idf, fct_reorder(word, tf_idf), fill = subreddit)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~subreddit, ncol = 4, scales = "free") +
+  labs(x = "tf-idf", y = NULL)
+```
+ 
+
+
+

@@ -1,0 +1,12 @@
+pandas
+sklearn
+nltk
+jupyter
+jupyter notebook
+os
+urllib
+pathlib
+tarfile
+pyprind
+praw
+pyarrow

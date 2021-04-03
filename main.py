@@ -75,16 +75,28 @@ def pull_and_save_submissions(directory="submissions"):
     df_submissions.reset_index().to_parquet(directory_filename)
 
 
-def read_submissions(directory="submissions"):
+def read_files_to_df(directory="submissions", parquet = True, params = None):
     """
     Read the saved submissions back into a dataframe, pass the name of the directory
-    # TODO : edit this to read multiple files
-    :param directory:
-    :return: dataframe
+    :param directory: The path to the directory where submissions raw text files are saved.
+      Expect the same schema in every file
+    :param parquet: Boolean, True to read parquet files using pd.read_parquet, else use read_csv and expect csv files
+    :return: dataframe: A dataframe containing all data from the
     """
+    if not params:
+        params = {}
+
     files_in_directory = glob.glob(directory + "/*")
-    submissions = pd.read_parquet(files_in_directory[0])
-    return submissions
+
+    all_submissions = []
+    for file in files_in_directory:
+        if parquet:
+            submissions = pd.read_parquet(file, **params)
+        else:
+            submissions = pd.read_csv(file, **params)
+        all_submissions.append(submissions)
+
+    return pd.concat(all_submissions)
 
 def tokenizer(text):
     """
@@ -103,7 +115,6 @@ def tokenizer_porter(text):
     """
     porter = PorterStemmer()
     return [porter.stem(word) for word in text.split()]
-
 
 
 class DataSplitter():
@@ -196,7 +207,7 @@ class SubredditClassificationExperiment:
 
 def main():
     # Read Data
-    data = read_submissions().reset_index()\
+    data = read_files_to_df().reset_index()\
         .pipe(pd.melt, id_vars=("index", "subreddit", "hot_rank"), var_name="text_type", value_name="text_post")
 
     # Split Data into Train and Test Sets
@@ -221,5 +232,3 @@ def main():
     # Run and view evaluation of the Experiment
     exp_condition_1.fit()
     exp_condition_1.evaluate()
-
-
